@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campus Navigator — Live Demo</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --text-secondary: #9aa0ab;
+    --accent: #1D9E75;
+    --accent-dark: #0F6E56;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem 1rem;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); font-size: 14px; margin: 0 0 1.5rem; }
+  .badge {
+    display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 12px;
+    background: rgba(29,158,117,0.15); color: var(--accent); margin-bottom: 1rem;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem;
+  }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+  label { font-size: 13px; color: var(--text-secondary); }
+  select {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 14px; min-width: 140px;
+  }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 9px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
+  }
+  button:hover { background: var(--accent-dark); }
+  svg { width: 100%; height: auto; display: block; }
+  .result {
+    margin-top: 1rem; padding: 1rem 1.25rem; background: var(--surface-2);
+    border-radius: 8px; display: none;
+  }
+  .result p { margin: 0 0 4px; font-size: 13px; color: var(--text-secondary); }
+  .result .route { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .footer { text-align: center; margin-top: 1.5rem; font-size: 12px; color: var(--text-secondary); }
+  .footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="badge">C++ · Data Structures & Algorithms</span>
+  <h1>Campus Navigator</h1>
+  <p class="sub">Live browser demo of the shortest-path engine — same Dijkstra's algorithm as the C++ console app.</p>
+
+  <div class="card">
+    <div class="controls">
+      <label>From</label>
+      <select id="fromSel"></select>
+      <label>To</label>
+      <select id="toSel"></select>
+      <button onclick="runDijkstra()">Find shortest path</button>
+    </div>
+
+    <svg viewBox="0 0 680 380" id="mapSvg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+      <g id="edgeLayer"></g>
+      <g id="nodeLayer"></g>
+    </svg>
+
+    <div id="resultBox" class="result">
+      <p>Shortest route</p>
+      <p id="routeText" class="route"></p>
+      <p id="distText"></p>
+    </div>
+  </div>
+
+  <p class="footer">Full source code, build instructions, and CLI version on
+    <a href="https://github.com/Abdullah-WD/campus-navigator" target="_blank" rel="noopener">GitHub</a>
+  </p>
+</div>
+
+<script>
+const nodes = {
+  "Main Gate":      {x: 80,  y: 190},
+  "Admin Block":    {x: 210, y: 100},
+  "Cafeteria":      {x: 210, y: 280},
+  "Library":        {x: 360, y: 60},
+  "CS Department":  {x: 400, y: 200},
+  "Hostel Block":   {x: 550, y: 80},
+  "Sports Complex": {x: 580, y: 260}
+};
+const edges = [
+  ["Main Gate","Admin Block",120], ["Admin Block","Library",90],
+  ["Admin Block","Cafeteria",150], ["Library","CS Department",60],
+  ["Cafeteria","CS Department",100], ["CS Department","Sports Complex",300],
+  ["Library","Hostel Block",250], ["Hostel Block","Sports Complex",200]
+];
+const adj = {};
+Object.keys(nodes).forEach(n => adj[n] = []);
+edges.forEach(([a,b,w]) => { adj[a].push([b,w]); adj[b].push([a,w]); });
+
+const fromSel = document.getElementById('fromSel');
+const toSel = document.getElementById('toSel');
+Object.keys(nodes).forEach(n => {
+  fromSel.innerHTML += `<option value="${n}">${n}</option>`;
+  toSel.innerHTML += `<option value="${n}">${n}</option>`;
+});
+fromSel.value = "Main Gate";
+toSel.value = "Sports Complex";
+
+const edgeLayer = document.getElementById('edgeLayer');
+const nodeLayer = document.getElementById('nodeLayer');
+
+function drawGraph(highlightEdges, highlightNodes) {
+  highlightEdges = highlightEdges || new Set();
+  highlightNodes = highlightNodes || new Set();
+  edgeLayer.innerHTML = '';
+  nodeLayer.innerHTML = '';
+
+  edges.forEach(([a,b,w]) => {
+    const p1 = nodes[a], p2 = nodes[b];
+    const key1 = a+'|'+b, key2 = b+'|'+a;
+    const isHi = highlightEdges.has(key1) || highlightEdges.has(key2);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', p1.x); line.setAttribute('y1', p1.y);
+    line.setAttribute('x2', p2.x); line.setAttribute('y2', p2.y);
+    line.setAttribute('stroke', isHi ? '#1D9E75' : '#3a3f4b');
+    line.setAttribute('stroke-width', isHi ? 3 : 1.5);
+    edgeLayer.appendChild(line);
+
+    const mx = (p1.x+p2.x)/2, my = (p1.y+p2.y)/2;
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x', mx); label.setAttribute('y', my - 6);
+    label.setAttribute('text-anchor','middle');
+    label.setAttribute('font-size','12');
+    label.setAttribute('fill','#9aa0ab');
+    label.textContent = w + 'm';
+    edgeLayer.appendChild(label);
+  });
+
+  Object.entries(nodes).forEach(([name, p]) => {
+    const isHi = highlightNodes.has(name);
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx', p.x); circle.setAttribute('cy', p.y);
+    circle.setAttribute('r', 8);
+    circle.setAttribute('fill', isHi ? '#1D9E75' : '#1e222b');
+    circle.setAttribute('stroke', isHi ? '#0F6E56' : '#555c6b');
+    circle.setAttribute('stroke-width', 1.5);
+    g.appendChild(circle);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.setAttribute('x', p.x);
+    text.setAttribute('y', p.y - 14);
+    text.setAttribute('text-anchor','middle');
+    text.setAttribute('font-size','13');
+    text.setAttribute('font-weight', isHi ? '600' : '400');
+    text.setAttribute('fill', isHi ? '#e8eaed' : '#c4c8cf');
+    text.textContent = name;
+    g.appendChild(text);
+
+    nodeLayer.appendChild(g);
+  });
+}
+
+function runDijkstra() {
+  const src = fromSel.value, dst = toSel.value;
+  const dist = {}, prev = {}, visited = new Set();
+  Object.keys(nodes).forEach(n => dist[n] = Infinity);
+  dist[src] = 0;
+
+  while (visited.size < Object.keys(nodes).length) {
+    let u = null, best = Infinity;
+    Object.keys(nodes).forEach(n => {
+      if (!visited.has(n) && dist[n] < best) { best = dist[n]; u = n; }
+    });
+    if (u === null) break;
+    visited.add(u);
+    if (u === dst) break;
+    adj[u].forEach(([v,w]) => {
+      if (dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = u; }
+    });
+  }
+
+  const path = [];
+  let cur = dst;
+  if (dist[dst] === Infinity) {
+    document.getElementById('resultBox').style.display = 'block';
+    document.getElementById('routeText').textContent = 'No path found';
+    document.getElementById('distText').textContent = '';
+    drawGraph();
+    return;
+  }
+  while (cur !== src) { path.push(cur); cur = prev[cur]; }
+  path.push(src);
+  path.reverse();
+
+  const hiEdges = new Set();
+  for (let i = 0; i < path.length - 1; i++) hiEdges.add(path[i]+'|'+path[i+1]);
+  const hiNodes = new Set(path);
+
+  drawGraph(hiEdges, hiNodes);
+  document.getElementById('resultBox').style.display = 'block';
+  document.getElementById('routeText').textContent = path.join(' → ');
+  document.getElementById('distText').textContent = 'Total distance: ' + dist[dst] + 'm';
+}
+
+drawGraph();
+</script>
+</body>
+</html>
